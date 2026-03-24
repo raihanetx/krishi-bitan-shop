@@ -4,6 +4,7 @@ import { orders, orderItems, customers, variants, settings } from '@/db/schema'
 import { eq, sql, and, inArray } from 'drizzle-orm'
 import { isApiAuthenticated, authErrorResponse } from '@/lib/api-auth'
 import { checkRateLimit, rateLimitErrorResponse } from '@/lib/validation'
+import { checkHoneypot, detectBot } from '@/lib/bot-detection'
 
 // Steadfast Courier configuration
 const STEADFAST_BASE_URL = 'https://portal.packzy.com/api/v1'
@@ -174,10 +175,34 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/orders - Create new order (Public with rate limiting)
+// POST /api/orders - Create new order (Public with rate limiting + bot detection)
 export async function POST(request: NextRequest) {
   try {
-    // Rate limiting - prevent order spam
+    // === BOT DETECTION ===
+    const body = await request.json()
+    
+    // Check honeypot fields (invisible to humans)
+    const honeypotCheck = checkHoneypot(body)
+    if (!honeypotCheck.valid) {
+      // Silently reject - don't tell bots why
+      console.log('[SECURITY] Bot detected via honeypot')
+      return NextResponse.json(
+        { success: true, data: { id: 'pending' } }, // Fake success to confuse bots
+        { status: 201 }
+      )
+    }
+    
+    // Additional bot detection
+    const botCheck = detectBot(request, body)
+    if (botCheck.shouldBlock) {
+      console.log('[SECURITY] Bot blocked:', botCheck.reasons)
+      return NextResponse.json(
+        { success: false, error: 'Request could not be processed' },
+        { status: 400 }
+      )
+    }
+    
+    // === RATE LIMITING ===
     const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'
     const rateLimitKey = `order-create:${ip}`
     const rateLimit = checkRateLimit(rateLimitKey, 10, 60000) // 10 orders per minute per IP
@@ -185,8 +210,6 @@ export async function POST(request: NextRequest) {
     if (!rateLimit.allowed) {
       return rateLimitErrorResponse(rateLimit.resetAt)
     }
-
-    const body = await request.json()
 
     // Input validation for required fields
     const validationErrors: string[] = []

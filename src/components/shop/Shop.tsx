@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
 import { CartItem, ViewType } from '@/types'
 import { useShopStore } from '@/store/useShopStore'
 import { ProductCardSkeleton, CategorySkeleton, HeroSkeleton, OfferCardSkeleton, SectionHeaderSkeleton, ShopPageSkeleton } from '@/components/ui/skeleton'
 import { roundPrice } from '@/lib/utils'
 import { useCartToast } from '@/components/ui/CartToast'
+import { fadeInUp, staggerContainer, staggerItem, productCardHover, popIn } from '@/lib/animations'
 
 // Placeholder image for broken/missing images
 const PLACEHOLDER_IMG = '/placeholder.svg'
@@ -503,8 +505,13 @@ export default function Shop({ setView, addToCart, onCategoryClick }: ShopProps)
           </div>
 
           {filteredProducts.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-5 justify-items-start content-fade-in-stagger">
-                  {filteredProducts.map((item) => {
+                <motion.div 
+                  className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-5 justify-items-start content-fade-in-stagger"
+                  variants={staggerContainer}
+                  initial="initial"
+                  animate="animate"
+                >
+                  {filteredProducts.map((item, index) => {
                     // Get variants from variantMap to find actual discount
                     const productVariants = variantMap[item.id] || []
                     
@@ -551,28 +558,44 @@ export default function Shop({ setView, addToCart, onCategoryClick }: ShopProps)
                     const hasDiscount = bestDiscountPercent > 0 || (originalPrice && originalPrice > bestVariantPrice)
                     
                     return (
-                      <div 
-                        key={item.id} 
+                      <motion.div 
+                        key={item.id}
+                        variants={staggerItem}
+                        whileHover={{ y: -5, scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        transition={{ type: 'spring', stiffness: 400, damping: 20 }}
                         onClick={() => handleProductClick(item.id, item.name)}
                         onMouseEnter={() => {
                           // SMART: Prefetch product details on hover for instant navigation!
-                          const link = document.createElement('link')
-                          link.rel = 'prefetch'
-                          link.href = `/api/product-details?productId=${item.id}`
-                          document.head.appendChild(link)
-                          setTimeout(() => link.remove(), 3000)
+                          if ('requestIdleCallback' in window) {
+                            requestIdleCallback(() => {
+                              fetch(`/api/product-details?productId=${item.id}`, {
+                                method: 'GET',
+                                credentials: 'include',
+                              }).catch(() => {})
+                            })
+                          }
                         }}
                         className="bg-white p-3 relative cursor-pointer transition-all duration-300 flex flex-col w-full min-h-[230px] md:min-h-[260px] border border-gray-200 rounded-xl hover:border-[#16a34a] group"
                       >
                         {hasDiscount && (
-                          <span className="absolute top-2 left-2 bg-red-500 text-white text-[9px] md:text-[10px] font-bold px-2 py-0.5 rounded z-10">
+                          <motion.span 
+                            className="absolute top-2 left-2 bg-red-500 text-white text-[9px] md:text-[10px] font-bold px-2 py-0.5 rounded z-10"
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ type: 'spring', stiffness: 500, damping: 15, delay: index * 0.02 }}
+                          >
                             {maxSavings > 0 ? `TK ${maxSavings} ছাড়` : `-${bestDiscountPercent}%`}
-                          </span>
+                          </motion.span>
                         )}
                         <div className="flex-grow flex items-center justify-center py-2">
-                          <div className="w-full h-[130px] md:h-[150px] flex items-center justify-center">
+                          <motion.div 
+                            className="w-full h-[130px] md:h-[150px] flex items-center justify-center"
+                            whileHover={{ scale: 1.05 }}
+                            transition={{ duration: 0.2 }}
+                          >
                             <img src={item.image} alt={item.name} className="w-full h-full object-contain" loading="lazy" onError={handleImageError}/>
-                          </div>
+                          </motion.div>
                         </div>
                         <div className="flex flex-col mt-auto">
                           <h3 className="text-sm font-medium text-gray-800 truncate font-bangla">{item.name}</h3>
@@ -582,7 +605,7 @@ export default function Shop({ setView, addToCart, onCategoryClick }: ShopProps)
                               <span className="text-xs text-gray-400 line-through">TK {roundPrice(originalPrice)}</span>
                             )}
                           </div>
-                          <button 
+                          <motion.button 
                             className={`w-full text-[15px] md:text-[16px] font-semibold py-2 md:py-2.5 flex items-center justify-center gap-1.5 border-none cursor-pointer transition-all duration-300 rounded-md font-bangla ${
                               addedProducts.has(item.id) 
                                 ? 'bg-green-500 text-white scale-[1.02] shadow-lg shadow-green-500/30' 
@@ -590,6 +613,8 @@ export default function Shop({ setView, addToCart, onCategoryClick }: ShopProps)
                                 ? 'bg-[#15803d] text-white'
                                 : 'bg-[#16a34a] text-white hover:bg-[#15803d] active:scale-95'
                             }`}
+                            whileHover={{ scale: addedProducts.has(item.id) ? 1.02 : 1.02 }}
+                            whileTap={{ scale: 0.95 }}
                             onClick={(e) => { 
                               e.stopPropagation(); 
                               handleAddToCart(item.id, {
@@ -608,28 +633,49 @@ export default function Shop({ setView, addToCart, onCategoryClick }: ShopProps)
                               });
                             }}
                           >
-                            {addingProducts.has(item.id) ? (
-                              <>
-                                <i className="ri-loader-4-line text-sm md:text-base animate-spin"></i>
-                                যোগ হচ্ছে...
-                              </>
-                            ) : addedProducts.has(item.id) ? (
-                              <>
-                                <i className="ri-checkbox-circle-fill text-sm md:text-base"></i>
-                                যোগ হয়েছে!
-                              </>
-                            ) : (
-                              <>
-                                <i className="ri-shopping-cart-line text-sm md:text-base"></i>
-                                কার্টে যোগ করুন
-                              </>
-                            )}
-                          </button>
+                            <AnimatePresence mode="wait">
+                              {addingProducts.has(item.id) ? (
+                                <motion.span
+                                  key="adding"
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: -10 }}
+                                  className="flex items-center gap-1.5"
+                                >
+                                  <i className="ri-loader-4-line text-sm md:text-base animate-spin"></i>
+                                  যোগ হচ্ছে...
+                                </motion.span>
+                              ) : addedProducts.has(item.id) ? (
+                                <motion.span
+                                  key="added"
+                                  initial={{ opacity: 0, scale: 0.8 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.8 }}
+                                  transition={{ type: 'spring', stiffness: 500, damping: 15 }}
+                                  className="flex items-center gap-1.5"
+                                >
+                                  <i className="ri-checkbox-circle-fill text-sm md:text-base"></i>
+                                  যোগ হয়েছে!
+                                </motion.span>
+                              ) : (
+                                <motion.span
+                                  key="default"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  className="flex items-center gap-1.5"
+                                >
+                                  <i className="ri-shopping-cart-line text-sm md:text-base"></i>
+                                  কার্টে যোগ করুন
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                          </motion.button>
                         </div>
-                      </div>
+                      </motion.div>
                     )
                   })}
-                </div>
+                </motion.div>
               ) : (
                 <div className="text-center py-12">
                   <p className="text-gray-500 font-bangla">

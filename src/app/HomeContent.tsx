@@ -423,7 +423,7 @@ export default function HomeContent() {
     <div className="flex flex-col min-h-screen relative pb-16 md:pb-0">
       {/* Header - always show to avoid hydration mismatch */}
       {view !== 'thankyou' && (
-        <Header view={view} setView={handleNavigate} cartCount={cartCount} />
+        <Header cartCount={cartCount} />
       )}
 
       {/* Main content */}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAdmin } from '@/lib/auth'
+import { checkHoneypot, detectBot } from '@/lib/bot-detection'
 
 // Cookie settings
 const SESSION_COOKIE_NAME = 'admin_session'
@@ -7,13 +8,37 @@ const SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60 // 7 days
 
 export async function POST(request: NextRequest) {
   try {
+    const body = await request.json()
+    
+    // === BOT DETECTION ===
+    // Check honeypot fields (invisible to humans)
+    const honeypotCheck = checkHoneypot(body)
+    if (!honeypotCheck.valid) {
+      // Silently reject - don't tell bots why
+      console.log('[SECURITY] Bot detected on login via honeypot')
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Invalid credentials'
+      }, { status: 401 })
+    }
+    
+    // Additional bot detection
+    const botCheck = detectBot(request, body)
+    if (botCheck.shouldBlock) {
+      console.log('[SECURITY] Bot blocked on login:', botCheck.reasons)
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Invalid credentials'
+      }, { status: 401 })
+    }
+    
     // Get client info for audit logging
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim() 
       || request.headers.get('x-real-ip') 
       || 'unknown'
     const userAgent = request.headers.get('user-agent') || 'unknown'
     
-    const { username, password } = await request.json()
+    const { username, password } = body
     
     if (!username || !password) {
       return NextResponse.json({ 

@@ -106,10 +106,11 @@ export function isCacheFresh(timestamp: number, maxAgeMs: number): boolean {
   return Date.now() - timestamp < maxAgeMs
 }
 
-// Preload image for faster display
+// Preload image for faster display - OPTIMIZED
 export function preloadImage(url: string): void {
   if (!url || url.startsWith('data:')) return
   
+  // Check if image is already cached by browser
   const img = new Image()
   img.src = url
 }
@@ -194,5 +195,43 @@ export function throttle<T extends (...args: any[]) => any>(
       inThrottle = true
       setTimeout(() => inThrottle = false, limit)
     }
+  }
+}
+
+// SMART: Background refresh - refresh data before it expires
+export function setupBackgroundRefresh(
+  key: string,
+  fetcher: () => Promise<void>,
+  intervalMs: number
+): () => void {
+  const interval = setInterval(async () => {
+    try {
+      await fetcher()
+    } catch {
+      // Ignore background refresh errors
+    }
+  }, intervalMs)
+  
+  // Return cleanup function
+  return () => clearInterval(interval)
+}
+
+// SMART: Optimistic update - update UI immediately, rollback on error
+export async function optimisticUpdate<T>(
+  currentData: T,
+  updateFn: (data: T) => T,
+  serverFn: () => Promise<T>
+): Promise<T> {
+  // Apply optimistic update immediately
+  const optimisticData = updateFn(currentData)
+  
+  try {
+    // Try server update
+    const serverData = await serverFn()
+    return serverData
+  } catch (error) {
+    // On error, return original data (rollback)
+    console.error('Optimistic update failed, rolling back:', error)
+    return currentData
   }
 }

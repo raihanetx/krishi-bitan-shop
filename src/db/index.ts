@@ -13,10 +13,24 @@ if (!DATABASE_URL) {
   throw new Error('DATABASE_URL environment variable is required')
 }
 
-// Create postgres connection
+// Create postgres connection - OPTIMIZED for production
+// Connection pool settings for better performance
+const isProduction = process.env.NODE_ENV === 'production'
+
 const client = postgres(DATABASE_URL, { 
   ssl: 'require',
-  max: 1
+  // Connection pool - more connections for production = faster concurrent queries
+  max: isProduction ? 10 : 3,
+  // Idle timeout - close unused connections after 30 seconds
+  idle_timeout: 30,
+  // Connect timeout - fail fast if database is unreachable
+  connect_timeout: 10,
+  // Prepare statements for faster repeated queries
+  prepare: true,
+  // Transform undefined to null for safer queries
+  transform: {
+    undefined: null
+  }
 })
 const dbInstance = drizzle(client, { schema })
 

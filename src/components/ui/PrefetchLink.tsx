@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState, useCallback, memo } from 'react'
+import { useState, useCallback, memo, useRef } from 'react'
 import { prefetchApi, preloadImage } from '@/lib/smart-cache'
 
 interface PrefetchLinkProps {
@@ -17,7 +17,7 @@ interface PrefetchLinkProps {
   rel?: string
 }
 
-// Smart Link component with prefetching
+// Smart Link component with prefetching - OPTIMIZED for speed
 export const PrefetchLink = memo(function PrefetchLink({
   href,
   children,
@@ -31,10 +31,14 @@ export const PrefetchLink = memo(function PrefetchLink({
 }: PrefetchLinkProps) {
   const router = useRouter()
   const [isNavigating, setIsNavigating] = useState(false)
+  const hasPrefetched = useRef(false)
 
-  // Prefetch on hover (instant feel!)
+  // Prefetch on hover (instant feel!) - only once per component
   const handleMouseEnter = useCallback(() => {
-    // Prefetch the page
+    if (hasPrefetched.current) return
+    hasPrefetched.current = true
+    
+    // Prefetch the page using Next.js router
     router.prefetch(href)
     
     // Prefetch API data if specified
@@ -44,9 +48,21 @@ export const PrefetchLink = memo(function PrefetchLink({
     
     // Prefetch images if specified
     if (prefetchImages && prefetchImages.length > 0) {
-      prefetchImages.forEach(url => preloadImage(url))
+      // Use requestIdleCallback for non-critical image prefetching
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(() => {
+          prefetchImages.forEach(url => preloadImage(url))
+        })
+      } else {
+        prefetchImages.forEach(url => preloadImage(url))
+      }
     }
   }, [href, router, prefetchApiEndpoint, prefetchImages])
+
+  // Also prefetch on touch start for mobile (better UX)
+  const handleTouchStart = useCallback(() => {
+    handleMouseEnter()
+  }, [handleMouseEnter])
 
   // Handle click with loading state
   const handleClick = useCallback((e: React.MouseEvent) => {
@@ -59,11 +75,11 @@ export const PrefetchLink = memo(function PrefetchLink({
       onClick()
     }
     
-    // Small delay for transition feel
-    setTimeout(() => {
-      router.push(href)
-      setIsNavigating(false)
-    }, 50)
+    // Instant navigation for better UX
+    router.push(href)
+    
+    // Reset loading state after navigation
+    setTimeout(() => setIsNavigating(false), 300)
   }, [href, router, onClick, target])
 
   return (
@@ -71,6 +87,7 @@ export const PrefetchLink = memo(function PrefetchLink({
       href={href}
       className={className}
       onMouseEnter={handleMouseEnter}
+      onTouchStart={handleTouchStart}
       onClick={handleClick}
       style={style}
       target={target}

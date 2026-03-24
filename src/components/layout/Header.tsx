@@ -39,8 +39,6 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 interface HeaderProps {
-  view: ViewType
-  setView: (v: ViewType) => void
   cartCount: number
 }
 
@@ -165,7 +163,7 @@ function SearchResultsContainer({ query, onItemClick }: { query: string; onItemC
   )
 }
 
-export default function Header({ view, setView, cartCount }: HeaderProps) {
+export default function Header({ cartCount }: HeaderProps) {
   const router = useRouter()
   const pathname = usePathname()
   const { settings, searchQuery, setSearchQuery, categories, setSelectedCategory } = useShopStore()

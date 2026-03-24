@@ -115,7 +115,7 @@ export default function MainLayout({ children, hideLayout = false }: MainLayoutP
 
   return (
     <div className="flex flex-col min-h-screen relative pb-16 md:pb-0">
-      {showHeader && <Header view="shop" setView={() => {}} cartCount={cartCount} />}
+      {showHeader && <Header cartCount={cartCount} />}
       <div className="flex-grow w-full">
         {children}
       </div>

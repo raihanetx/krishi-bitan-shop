@@ -6,6 +6,7 @@ import { hashPassword, isHashed } from '@/lib/auth'
 import { encrypt, safeDecrypt, isEncrypted, auditLog } from '@/lib/security'
 import { isApiAuthenticated, authErrorResponse } from '@/lib/api-auth'
 import { sanitizeString } from '@/lib/validation'
+import { isPasswordStrongEnough } from '@/lib/password-strength'
 
 // Check if value is a masked placeholder (should never be saved)
 const isMaskedPlaceholder = (value: string): boolean => {
@@ -237,6 +238,15 @@ export async function PUT(request: NextRequest) {
     
     // Password: Hash before saving
     if (body.adminPassword !== undefined && body.adminPassword !== '') {
+      // SECURITY: Validate password strength
+      const passwordCheck = isPasswordStrongEnough(body.adminPassword)
+      if (!passwordCheck.valid) {
+        return NextResponse.json({ 
+          success: false, 
+          error: passwordCheck.error || 'Password is too weak. Use 8+ characters with uppercase, lowercase, number, and special character.' 
+        }, { status: 400 })
+      }
+      
       if (!isHashed(body.adminPassword)) {
         updateData.adminPassword = await hashPassword(body.adminPassword)
       } else {

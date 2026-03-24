@@ -3,9 +3,15 @@ import { db } from '@/db'
 import { products, variants, productImages, productFaqs, relatedProducts, reviews } from '@/db/schema'
 import { eq, sql, inArray } from 'drizzle-orm'
 
-// Cache for product details
+// OPTIMIZED: Cache for product details with longer TTL
 const productCache = new Map<number, { data: any; timestamp: number }>()
-const CACHE_TTL = 30 * 1000 // 30 seconds
+const CACHE_TTL = 2 * 60 * 1000 // 2 minutes - products don't change often
+
+// HTTP Cache headers for CDN caching
+const HTTP_CACHE_HEADERS = {
+  'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+  'CDN-Cache-Control': 'public, max-age=60',
+}
 
 // GET /api/product-details - Get ALL product data in ONE request
 export async function GET(request: NextRequest) {
@@ -16,10 +22,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Product ID required' }, { status: 400 })
   }
 
-  // Check cache first
+  // Check cache first - INSTANT response
   const cached = productCache.get(productId)
   if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-    return NextResponse.json({ success: true, cached: true, data: cached.data })
+    return NextResponse.json({ success: true, cached: true, data: cached.data }, { headers: HTTP_CACHE_HEADERS })
   }
 
   try {
@@ -87,14 +93,14 @@ export async function GET(request: NextRequest) {
     // Update cache
     productCache.set(productId, { data, timestamp: Date.now() })
 
-    return NextResponse.json({ success: true, cached: false, data })
+    return NextResponse.json({ success: true, cached: false, data }, { headers: HTTP_CACHE_HEADERS })
   } catch (error) {
     console.error('Product details fetch error:', error)
     
-    // Return cached data if available
+    // Return cached data if available (stale but better than error)
     const cached = productCache.get(productId)
     if (cached) {
-      return NextResponse.json({ success: true, cached: true, stale: true, data: cached.data })
+      return NextResponse.json({ success: true, cached: true, stale: true, data: cached.data }, { headers: HTTP_CACHE_HEADERS })
     }
     
     return NextResponse.json({ success: false, error: 'Failed to fetch product' }, { status: 500 })

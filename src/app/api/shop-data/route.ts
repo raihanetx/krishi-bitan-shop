@@ -5,10 +5,12 @@ import { categories, products, settings, variants } from '@/db/schema'
 // Cache TTL: 60 seconds
 const CACHE_TTL = 60 * 1000
 
-// HTTP Cache settings - stale-while-revalidate pattern
+// OPTIMIZED: Aggressive caching for speed
 const HTTP_CACHE_HEADERS = {
-  'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
-  'CDN-Cache-Control': 'public, max-age=30',
+  'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+  'CDN-Cache-Control': 'public, max-age=60, stale-while-revalidate=120',
+  // Enable compression hint
+  'Vary': 'Accept-Encoding',
 }
 
 // SMART: Only select columns we need (EXCLUDE large base64 images!)

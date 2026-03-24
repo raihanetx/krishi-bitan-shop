@@ -342,12 +342,27 @@ export default function ProductDetail({ setView, addToCart }: ProductDetailProps
     }, 1300)
   }
 
-  // Handle Buy Now - navigate to checkout (does NOT add to cart)
+  // Handle Buy Now - adds to cart and navigates to checkout
   const handleBuyNow = () => {
     if (!selectedProduct) return
     
-    // Navigate to checkout without adding to cart
-    // User must use "Add to Cart" button to add items
+    // Add current product with selected variant to cart first
+    addToCart({
+      id: selectedProduct.id,
+      name: selectedProduct.name,
+      price: displayPrice,
+      oldPrice: selectedProduct.oldPrice || selectedProduct.price,
+      img: selectedProduct.image,
+      weight: displayVariantName,
+      quantity: quantity,
+      category: selectedProduct.category,
+      categoryId: selectedProduct.categoryId || undefined,
+      offer: hasOffer,
+      discountType: displayDiscountType,
+      discountValue: displayDiscountValue,
+    })
+    
+    // Then navigate to checkout
     router.push('/checkout')
   }
 

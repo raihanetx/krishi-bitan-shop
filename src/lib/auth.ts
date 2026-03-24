@@ -10,6 +10,7 @@ import {
   recordFailedAttemptDB, 
   clearFailedAttemptsDB 
 } from './security'
+import { isPasswordStrongEnough } from './password-strength'
 
 // ============================================
 // SECURITY: Session configuration - NO HARDCODED SECRETS!
@@ -181,6 +182,8 @@ export async function authenticateAdmin(
   }
   
   // Check username
+  // SECURITY: Use SAME error message for wrong username AND wrong password
+  // This prevents username enumeration attacks
   if (username !== creds.username) {
     const attempt = await recordFailedAttemptDB(ip)
     await auditLog({
@@ -188,12 +191,12 @@ export async function authenticateAdmin(
       category: 'auth',
       ipAddress: ip,
       userAgent,
-      details: `Invalid username: ${username}`
+      details: 'Invalid credentials' // Don't log which was wrong
     })
     
     return { 
       success: false, 
-      error: 'Invalid credentials',
+      error: 'Invalid credentials', // Generic - don't reveal "username not found"
       remainingAttempts: attempt.count >= 5 ? 0 : 5 - attempt.count
     }
   }
@@ -208,12 +211,12 @@ export async function authenticateAdmin(
       category: 'auth',
       ipAddress: ip,
       userAgent,
-      details: 'Invalid password'
+      details: 'Invalid credentials' // Don't log "wrong password"
     })
     
     return { 
       success: false, 
-      error: 'Invalid credentials',
+      error: 'Invalid credentials', // Same message as wrong username
       remainingAttempts: attempt.count >= 5 ? 0 : 5 - attempt.count
     }
   }

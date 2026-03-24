@@ -48,7 +48,7 @@ export default function PageLayout({ children, showFooter = true }: PageLayoutPr
   return (
     <div className="flex flex-col min-h-screen relative pb-16 md:pb-0">
       {activeView !== 'thankyou' && (
-        <Header view={activeView} setView={handleNavigate} cartCount={cartCount} />
+        <Header cartCount={cartCount} />
       )}
       <div className="flex-grow w-full">
         {children}
