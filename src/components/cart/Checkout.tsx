@@ -75,15 +75,6 @@ export default function Checkout({ setView, onConfirm, cartItems = [], deliveryC
     }
   }, [])
   
-  // Checkout duration timer - track how long customer has been on checkout
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCheckoutDuration(prev => prev + 1)
-    }, 1000)
-    
-    return () => clearInterval(timer)
-  }, [])
-  
   // Format duration for display
   const formatDuration = (seconds: number): string => {
     if (seconds < 60) return `${seconds} সেকেন্ড`
@@ -159,8 +150,24 @@ export default function Checkout({ setView, onConfirm, cartItems = [], deliveryC
   // Track if we already recorded the visit
   const visitRecordedRef = useRef(false)
   const checkoutStartTimeRef = useRef<Date | null>(null)
-
-  // Auto-load stored coupon from cart store
+  const checkoutDurationRef = useRef(0) // Use ref to persist across StrictMode re-renders
+  
+  // Checkout duration timer - track how long customer has been on checkout
+  // Using ref + effect to ensure duration survives StrictMode double-render
+  useEffect(() => {
+    // Record start time on first mount only
+    if (!checkoutStartTimeRef.current) {
+      checkoutStartTimeRef.current = new Date()
+    }
+    
+    const timer = setInterval(() => {
+      checkoutDurationRef.current += 1
+      // Also update state for any UI that might need it (optional)
+      setCheckoutDuration(checkoutDurationRef.current)
+    }, 1000)
+    
+    return () => clearInterval(timer)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (hasLoadedStoredCoupon.current) return
     if (appliedCoupon && cartItems.length > 0) {
@@ -375,13 +382,14 @@ export default function Checkout({ setView, onConfirm, cartItems = [], deliveryC
       return
     }
     
-    // Log checkout duration being sent
-    console.log('🔍 [CHECKOUT] Confirming order with checkoutDuration:', checkoutDuration, 'seconds')
+    // Log checkout duration being sent - use ref value as it persists across StrictMode re-renders
+    const finalDuration = checkoutDurationRef.current
+    console.log('🔍 [CHECKOUT] Confirming order with checkoutDuration:', finalDuration, 'seconds')
     
     setIsSubmitting(true)
     try {
-      // Pass checkout duration to parent
-      await onConfirm({ name, phone, address, note }, validatedCoupon?.code || undefined, checkoutDuration)
+      // Pass checkout duration to parent - use ref value for accuracy
+      await onConfirm({ name, phone, address, note }, validatedCoupon?.code || undefined, finalDuration)
       // Navigation happens in onConfirm, so we don't need to set isSubmitting to false
     } catch (error: any) {
       console.error('Checkout error:', error)
