@@ -171,10 +171,13 @@ export interface AbandonedHistory {
   products: AbandonedProduct[]
   total: number
   checkoutSeconds?: number
+  sessionId?: string
 }
 
 export interface AbandonedCheckout {
   id: number
+  customerId: string // Unique customer ID (CUST-XXXXXX or GUEST-X)
+  sessionId: string
   name: string
   phone: string
   address: string

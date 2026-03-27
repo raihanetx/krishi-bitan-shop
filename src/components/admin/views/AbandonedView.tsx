@@ -78,7 +78,8 @@ const AbandonedView: React.FC = () => {
       {/* Table */}
       <div className="flex flex-col gap-2">
         {/* Header */}
-        <div className="grid grid-cols-5 bg-[#f1f5f9] border border-[#e2e8f0]" style={{ borderRadius: '5px' }}>
+        <div className="grid grid-cols-6 bg-[#f1f5f9] border border-[#e2e8f0]" style={{ borderRadius: '5px' }}>
+          <div className="px-4 py-3 border-r border-[#e2e8f0] text-[11px] font-semibold uppercase tracking-wide text-[#475569]">Customer ID</div>
           <div className="px-4 py-3 border-r border-[#e2e8f0] text-[11px] font-semibold uppercase tracking-wide text-[#475569]">Name / Phone</div>
           <div className="px-4 py-3 border-r border-[#e2e8f0] text-[11px] font-semibold uppercase tracking-wide text-[#475569]">Address</div>
           <div className="px-4 py-3 border-r border-[#e2e8f0] text-center text-[11px] font-semibold uppercase tracking-wide text-[#475569]">Last Visit</div>
@@ -96,7 +97,18 @@ const AbandonedView: React.FC = () => {
           filteredCheckouts.map((ab) => (
             <div key={ab.id} className="flex flex-col">
               {/* Main Row */}
-              <div className="grid grid-cols-5 bg-white border border-[#e2e8f0] hover:border-[#94a3b8] transition-all" style={{ borderRadius: '5px' }}>
+              <div className="grid grid-cols-6 bg-white border border-[#e2e8f0] hover:border-[#94a3b8] transition-all" style={{ borderRadius: '5px' }}>
+                {/* Customer ID */}
+                <div className="px-4 py-3 border-r border-[#e2e8f0] flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs bg-blue-100 text-blue-600 border-2 border-blue-200 flex-shrink-0">
+                    <i className="ri-user-line"></i>
+                  </div>
+                  <div>
+                    <p className="text-[12px] font-bold text-blue-600">{ab.customerId || `CUST-${(ab.phone || '').slice(-6) || 'GUEST'}`}</p>
+                    <p className="text-[10px] text-gray-400">{ab.totalVisits > 1 ? 'Returning' : 'New'}</p>
+                  </div>
+                </div>
+                
                 {/* Name / Phone */}
                 <div className="px-4 py-3 border-r border-[#e2e8f0] flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs bg-green-100 text-green-600 border-2 border-green-200 flex-shrink-0">{getInitials(ab.name)}</div>

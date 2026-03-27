@@ -55,7 +55,8 @@ function getTimeAgo(dateStr: string, timeStr: string): string {
   }
 }
 
-// GET: Get all abandoned checkouts GROUPED BY SESSION ID (Admin only)
+// GET: Get all abandoned checkouts GROUPED BY PHONE NUMBER (Admin only)
+// If phone is not available, fall back to sessionId
 export async function GET() {
   try {
     // Authentication required - abandoned cart data is business sensitive
@@ -66,17 +67,19 @@ export async function GET() {
 
     const allRecords = await db.select().from(abandonedCheckouts).orderBy(desc(abandonedCheckouts.createdAt))
     
-    const sessionGroups = new Map<string, typeof allRecords>()
+    // Group by phone number (primary) or sessionId (fallback for visitors without phone)
+    const customerGroups = new Map<string, typeof allRecords>()
     
     for (const record of allRecords) {
-      const key = record.sessionId
-      if (!sessionGroups.has(key)) {
-        sessionGroups.set(key, [])
+      // Use phone as key if available, otherwise use sessionId
+      const key = record.phone || `session_${record.sessionId}`
+      if (!customerGroups.has(key)) {
+        customerGroups.set(key, [])
       }
-      sessionGroups.get(key)!.push(record)
+      customerGroups.get(key)!.push(record)
     }
     
-    const result = Array.from(sessionGroups.entries()).map(([sessionId, records], index) => {
+    const result = Array.from(customerGroups.entries()).map(([customerKey, records], index) => {
       const sorted = [...records].sort((a, b) => {
         const timeA = new Date(a.createdAt || 0).getTime()
         const timeB = new Date(b.createdAt || 0).getTime()
@@ -87,6 +90,11 @@ export async function GET() {
       const totalVisits = records.length
       const completedCount = records.filter(r => r.status === 'completed').length
       
+      // Generate a customer ID based on phone or session
+      const customerId = latest.phone 
+        ? `CUST-${latest.phone.slice(-6)}` 
+        : `GUEST-${index + 1}`
+      
       const history = sorted.map(r => {
         let products = []
         try {
@@ -95,8 +103,6 @@ export async function GET() {
         
         // Read actual checkout duration from database
         const checkoutSeconds = r.checkoutSeconds || 0
-        
-        console.log('📊 [ABANDONED GET] Record:', r.id, 'checkoutSeconds:', r.checkoutSeconds, '-> returning:', checkoutSeconds)
         
         return {
           id: r.id,
@@ -111,13 +117,15 @@ export async function GET() {
           phone: r.phone,
           address: r.address,
           completedOrderId: r.completedOrderId,
-          checkoutSeconds
+          checkoutSeconds,
+          sessionId: r.sessionId, // Include sessionId for reference
         }
       })
       
       return {
         id: index + 1,
-        sessionId,
+        customerId, // Unique customer identifier
+        sessionId: latest.sessionId,
         name: latest.name || 'Unknown',
         phone: latest.phone || '',
         address: latest.address || '',
