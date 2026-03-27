@@ -247,8 +247,9 @@ export default function HomeContent() {
       console.log('📊 [TRACKING]', { visitorId, sessionId, isNewVisitor, deviceType, browser, os })
 
       // Track to visitor_sessions table with visitorId
+      // Backend will determine if this is new or returning visitor
       try {
-        await fetch('/api/visitors', {
+        const response = await fetch('/api/visitors', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -257,10 +258,13 @@ export default function HomeContent() {
             deviceType, 
             browser, 
             os, 
-            isNewVisitor,
             date: today 
           }),
         })
+        const result = await response.json()
+        if (result.success) {
+          console.log('📊 [TRACKING] Visitor tracked:', result.isNew ? 'NEW' : 'RETURNING', '| ID:', result.visitorId)
+        }
       } catch (error) {
         console.error('Failed to track visitor:', error)
       }

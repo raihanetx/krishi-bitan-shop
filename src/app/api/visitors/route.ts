@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/db'
 import { visitorSessions } from '@/db/schema'
-import { eq, sql, and } from 'drizzle-orm'
+import { eq, sql, and, asc } from 'drizzle-orm'
 
 // POST /api/visitors - Track visitor session with device info
+// ============================================
+// ARCHITECTURE:
+// - visitorId: Persistent ID in localStorage (V-XXXXXX)
+// - sessionId: Session ID in sessionStorage (S-XXXXXX), resets on browser close
+// - isNewVisitor: TRUE if this is their FIRST EVER visit to the site
+// ============================================
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { visitorId, sessionId, deviceType, browser, os, isNewVisitor, date } = body
+    const { visitorId, sessionId, deviceType, browser, os, date } = body
 
-    console.log('📥 [VISITORS API] Received:', { visitorId, sessionId, deviceType, browser, os, isNewVisitor, date })
+    console.log('📥 [VISITORS API] Received:', { visitorId, sessionId, deviceType, browser, os, date })
 
     if (!sessionId || !deviceType || !browser || !os) {
       return NextResponse.json({
@@ -39,22 +45,36 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Determine if this is truly a new or returning visitor
-    let isActuallyNew = isNewVisitor
+    // ============================================
+    // DETERMINE NEW vs RETURNING VISITOR
+    // ============================================
+    // A visitor is "NEW" if we have NEVER seen their visitorId before
+    // A visitor is "RETURNING" if we have seen their visitorId on a PREVIOUS day
+    // ============================================
+    
+    let isActuallyNew = true // Default: new visitor
 
-    // If visitorId provided, check if we've seen them before
     if (visitorId) {
-      const previousVisits = await db.select().from(visitorSessions)
+      // Check if we've EVER seen this visitorId before (any date)
+      const allPreviousVisits = await db.select()
+        .from(visitorSessions)
         .where(eq(visitorSessions.visitorId, visitorId))
+        .orderBy(asc(visitorSessions.date))
         .limit(1)
 
-      if (previousVisits.length > 0) {
-        isActuallyNew = false // They've visited before
-        console.log('🔄 [VISITORS API] Returning visitor:', visitorId)
+      if (allPreviousVisits.length > 0) {
+        // Found previous visit - this is a RETURNING visitor
+        const firstVisitDate = allPreviousVisits[0].date
+        isActuallyNew = false
+        console.log('🔄 [VISITORS API] Returning visitor:', visitorId, '| First visit:', firstVisitDate)
       } else {
-        isActuallyNew = true // First time we see this visitorId
+        // Never seen before - this is a NEW visitor
+        isActuallyNew = true
         console.log('🆕 [VISITORS API] New visitor:', visitorId)
       }
+    } else {
+      // No visitorId provided - treat as new session without persistent tracking
+      console.log('⚠️ [VISITORS API] No visitorId provided, treating as new')
     }
 
     // Insert new session record
@@ -71,7 +91,8 @@ export async function POST(request: NextRequest) {
     console.log('✅ [VISITORS API] Tracked:', { 
       visitorId: newSession[0].visitorId,
       sessionId: newSession[0].sessionId, 
-      isNew: newSession[0].isNewVisitor 
+      isNew: newSession[0].isNewVisitor,
+      date: today
     })
 
     return NextResponse.json({ 

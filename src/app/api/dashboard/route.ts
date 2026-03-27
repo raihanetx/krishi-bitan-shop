@@ -233,24 +233,80 @@ export async function GET(request: NextRequest) {
     const uniqueVisitors = uniqueVisitorIdSet.size
     
     // ============================================
-    // NEW vs REPEAT VISITOR LOGIC
+    // NEW vs REPEAT VISITOR LOGIC (CORRECTED)
     // ============================================
-    // Using the isNewVisitor field from database
-    // OR counting based on visitorId frequency
+    // A visitor is "NEW" if their FIRST EVER visit was within this period
+    // A visitor is "RETURNING" if their FIRST EVER visit was BEFORE the period started
+    // ============================================
     
-    // Get all sessions for these visitors to count visits
     let newVisitorsCount = 0
     let returningVisitorsCount = 0
     
-    // Count using isNewVisitor field first (if available)
-    const newVisitorSessions = allVisitorSessions.filter(s => s.isNewVisitor === true)
-    const returningVisitorSessions = allVisitorSessions.filter(s => s.isNewVisitor === false)
+    // Get all unique visitorIds from this period
+    const periodVisitorIds = Array.from(uniqueVisitorIdSet).filter(id => id && !id.startsWith('S-'))
     
-    // If we have isNewVisitor data, use it
-    if (newVisitorSessions.length > 0 || returningVisitorSessions.length > 0) {
-      // Count unique visitors by their first appearance
+    if (periodVisitorIds.length > 0 && DATABASE_URL) {
+      try {
+        const sql = neon(DATABASE_URL)
+        
+        // For each visitor, find their FIRST EVER visit date
+        // This query gets the minimum date for each visitorId
+        // Using unnest for array parameter in PostgreSQL
+        const firstVisitDates = await sql`
+          SELECT 
+            visitor_id,
+            MIN(date) as first_visit_date
+          FROM visitor_sessions
+          WHERE visitor_id = ANY(${periodVisitorIds as string[]}::text[])
+          GROUP BY visitor_id
+        `
+        
+        // Create a map of visitorId -> first visit date
+        const firstVisitMap: Record<string, string> = {}
+        for (const row of firstVisitDates) {
+          firstVisitMap[row.visitor_id] = row.first_visit_date
+        }
+        
+        // Count new vs returning based on first visit date
+        for (const vid of periodVisitorIds) {
+          const firstVisit = firstVisitMap[vid]
+          if (!firstVisit) continue
+          
+          if (firstVisit >= startDateStr) {
+            // First visit is within the period → NEW visitor
+            newVisitorsCount++
+          } else {
+            // First visit was before the period started → RETURNING visitor
+            returningVisitorsCount++
+          }
+        }
+        
+        console.log('📊 [DASHBOARD] Visitor counts (corrected):', { 
+          uniqueVisitors, 
+          newVisitorsCount, 
+          returningVisitorsCount,
+          totalVisits,
+          periodStart: startDateStr
+        })
+      } catch (visitorError) {
+        console.error('Visitor counting error:', visitorError)
+        // Fallback: use isNewVisitor field
+        const countedVisitors = new Set<string>()
+        for (const session of allVisitorSessions) {
+          const vid = session.visitorId || session.sessionId
+          if (!vid || countedVisitors.has(vid)) continue
+          
+          if (session.isNewVisitor === true) {
+            newVisitorsCount++
+          } else if (session.isNewVisitor === false) {
+            returningVisitorsCount++
+          }
+          countedVisitors.add(vid)
+        }
+      }
+    } else {
+      // No persistent visitorIds, count by isNewVisitor field
       const countedVisitors = new Set<string>()
-      
       for (const session of allVisitorSessions) {
         const vid = session.visitorId || session.sessionId
         if (!vid || countedVisitors.has(vid)) continue
@@ -262,47 +318,7 @@ export async function GET(request: NextRequest) {
         }
         countedVisitors.add(vid)
       }
-    } else {
-      // Fallback: Count by visitorId frequency across ALL historical data
-      const visitorIdList = Array.from(uniqueVisitorIdSet).filter(id => id && !id.startsWith('session_'))
-      
-      if (visitorIdList.length > 0) {
-        const allVisitorRecords = await db.select({
-          visitorId: visitorSessions.visitorId,
-        })
-          .from(visitorSessions)
-          .where(inArray(visitorSessions.visitorId, visitorIdList as string[]))
-        
-        // Count occurrences per visitorId
-        const visitorCounts: Record<string, number> = {}
-        for (const record of allVisitorRecords) {
-          if (record.visitorId) {
-            visitorCounts[record.visitorId] = (visitorCounts[record.visitorId] || 0) + 1
-          }
-        }
-        
-        // New = exactly 1 visit, Returning = more than 1 visit
-        for (const vid of visitorIdList) {
-          const count = visitorCounts[vid] || 0
-          if (count === 1) {
-            newVisitorsCount++
-          } else if (count > 1) {
-            returningVisitorsCount++
-          }
-        }
-      } else {
-        // No persistent visitorIds, all are "new"
-        newVisitorsCount = uniqueVisitors
-        returningVisitorsCount = 0
-      }
     }
-    
-    console.log('📊 [DASHBOARD] Visitor counts:', { 
-      uniqueVisitors, 
-      newVisitorsCount, 
-      returningVisitorsCount,
-      totalVisits
-    })
 
     // Device Stats from visitorSessions
     const deviceCounts = { mobile: 0, desktop: 0, tablet: 0 }
