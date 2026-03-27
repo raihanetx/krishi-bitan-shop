@@ -409,17 +409,18 @@ export default function Checkout({ setView, onConfirm, cartItems = [], deliveryC
                         }}></span>
                       )}
                     </h4>
-                    {/* Minimal quantity control - number in middle */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                      <i 
+                    {/* Minimal quantity control - number in middle with label */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                      <span style={{ fontSize: '12px', color: '#666', fontFamily: "'Hind Siliguri', 'Noto Sans Bengali', sans-serif" }}>পরিমাণ:</span>
+                      <i
                         onClick={() => updateQuantity(item.id, Math.max(1, (item.quantity || 1) - 1))}
-                        className="ri-subtract-line" 
+                        className="ri-subtract-line"
                         style={{ fontSize: '16px', color: '#888', cursor: 'pointer' }}
                       ></i>
                       <span style={{ fontSize: '14px', fontWeight: 600, color: '#333', minWidth: '16px', textAlign: 'center' }}>{item.quantity || 1}</span>
-                      <i 
+                      <i
                         onClick={() => updateQuantity(item.id, (item.quantity || 1) + 1)}
-                        className="ri-add-line" 
+                        className="ri-add-line"
                         style={{ fontSize: '16px', color: '#888', cursor: 'pointer' }}
                       ></i>
                     </div>
