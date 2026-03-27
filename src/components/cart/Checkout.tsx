@@ -378,10 +378,10 @@ export default function Checkout({ setView, onConfirm, cartItems = [], deliveryC
             <i className="ri-shopping-bag-3-line"></i> আপনার অর্ডার সারসংক্ষেপ
           </div>
           
-          {/* Total Items Summary */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', fontFamily: "'Hind Siliguri', 'Noto Sans Bengali', sans-serif" }}>
-            <span style={{ fontSize: '13px', color: '#666' }}>মোট {cartItems.length} টা আইটেম</span>
-            <span style={{ fontSize: '12px', color: '#999' }}>(পরিমাণ: {cartItems.reduce((sum, item) => sum + (item.quantity || 1), 0)})</span>
+          {/* Total Items Summary - Clear breakdown */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '16px', fontFamily: "'Hind Siliguri', 'Noto Sans Bengali', sans-serif", flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', color: '#666' }}>মোট {cartItems.length}টি প্রোডাক্ট,</span>
+            <span style={{ fontSize: '13px', color: '#888' }}>পরিমাণ {cartItems.reduce((sum, item) => sum + (item.quantity || 1), 0)}টি</span>
           </div>
         
           {cartItems.length > 0 ? (
@@ -409,18 +409,18 @@ export default function Checkout({ setView, onConfirm, cartItems = [], deliveryC
                         }}></span>
                       )}
                     </h4>
-                    {/* Minimal quantity control - just icons */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
-                      <span style={{ fontSize: '12px', color: '#888' }}>পরিমাণ: {item.quantity || 1}</span>
+                    {/* Minimal quantity control - number in middle */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
                       <i 
                         onClick={() => updateQuantity(item.id, Math.max(1, (item.quantity || 1) - 1))}
                         className="ri-subtract-line" 
-                        style={{ fontSize: '14px', color: '#999', cursor: 'pointer' }}
+                        style={{ fontSize: '16px', color: '#888', cursor: 'pointer' }}
                       ></i>
+                      <span style={{ fontSize: '14px', fontWeight: 600, color: '#333', minWidth: '16px', textAlign: 'center' }}>{item.quantity || 1}</span>
                       <i 
                         onClick={() => updateQuantity(item.id, (item.quantity || 1) + 1)}
                         className="ri-add-line" 
-                        style={{ fontSize: '14px', color: '#999', cursor: 'pointer' }}
+                        style={{ fontSize: '16px', color: '#888', cursor: 'pointer' }}
                       ></i>
                     </div>
                   </div>
