@@ -49,7 +49,7 @@ const getStatusConfig = (order: Order): StatusConfig => {
   }
   
   // If delivered - completed
-  if (order.courierStatus === 'delivered') {
+  if (order.courierStatus === 'delivered' || order.courierStatus === 'delivered_approval_pending') {
     return {
       bg: 'bg-green-600',
       icon: 'ri-checkbox-circle-line',
@@ -59,25 +59,58 @@ const getStatusConfig = (order: Order): StatusConfig => {
     }
   }
   
-  // If shipping/on the way - in progress
-  if (order.courierStatus === 'shipping' || order.courierStatus === 'on_the_way') {
+  // If partial delivered
+  if (order.courierStatus === 'partial_delivered' || order.courierStatus === 'partial_delivered_approval_pending') {
     return {
-      bg: 'bg-purple-600',
-      icon: 'ri-loader-3-line',
-      textBn: 'ডেলিভারি হচ্ছে',
-      textEn: 'Shipping',
-      description: 'আপনার পার্সেল রাস্তায় আছে'
+      bg: 'bg-teal-600',
+      icon: 'ri-checkbox-circle-line',
+      textBn: 'আংশিক ডেলিভারি',
+      textEn: 'Partial Delivered',
+      description: 'আপনার অর্ডার আংশিক ডেলিভারি হয়েছে'
     }
   }
   
-  // If packaging/processing
-  if (order.courierStatus === 'packaging' || order.courierStatus === 'processing') {
+  // If hold
+  if (order.courierStatus === 'hold') {
     return {
-      bg: 'bg-blue-500',
-      icon: 'ri-settings-3-line',
-      textBn: 'প্যাকেজিং',
-      textEn: 'Packaging',
-      description: 'আপনার অর্ডার প্যাক করা হচ্ছে'
+      bg: 'bg-orange-500',
+      icon: 'ri-pause-circle-line',
+      textBn: 'হোল্ডে আছে',
+      textEn: 'On Hold',
+      description: 'আপনার অর্ডার হোল্ডে আছে'
+    }
+  }
+  
+  // If in_review - sent to courier, waiting for pickup
+  if (order.courierStatus === 'in_review') {
+    return {
+      bg: 'bg-purple-600',
+      icon: 'ri-truck-line',
+      textBn: 'কুরিয়ারে পাঠানো হয়েছে',
+      textEn: 'Sent to Courier',
+      description: 'আপনার অর্ডার কুরিয়ারে পাঠানো হয়েছে'
+    }
+  }
+  
+  // If pending at courier
+  if (order.courierStatus === 'pending') {
+    return {
+      bg: 'bg-indigo-500',
+      icon: 'ri-loader-4-line',
+      textBn: 'কুরিয়ারে আছে',
+      textEn: 'At Courier',
+      description: 'আপনার অর্ডার কুরিয়ারে প্রসেস হচ্ছে'
+    }
+  }
+  
+  // If cancelled by courier
+  if (order.courierStatus === 'cancelled' || order.courierStatus === 'cancelled_approval_pending') {
+    return {
+      bg: 'bg-red-500',
+      icon: 'ri-close-circle-line',
+      textBn: 'কুরিয়ার বাতিল',
+      textEn: 'Courier Cancelled',
+      description: 'কুরিয়ার কর্তৃক বাতিল করা হয়েছে'
     }
   }
   
