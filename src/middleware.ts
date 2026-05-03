@@ -1,6 +1,25 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import crypto from 'crypto'
+
+// Use Web Crypto API (Edge Runtime compatible) instead of Node.js crypto
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let result = 0
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return result === 0
+}
+
+function randomBytesBase64(length: number): string {
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
 
 // ============================================
 // CSRF PROTECTION — Middleware-level validation
@@ -38,19 +57,8 @@ function validateCsrf(request: NextRequest): boolean {
     return false
   }
 
-  // Constant-time comparison to prevent timing attacks
-  try {
-    const cookieBuf = Buffer.from(cookieToken, 'hex')
-    const headerBuf = Buffer.from(headerToken, 'hex')
-
-    if (cookieBuf.length !== headerBuf.length) {
-      return false
-    }
-
-    return crypto.timingSafeEqual(cookieBuf, headerBuf)
-  } catch {
-    return false
-  }
+  // Constant-time comparison (Edge Runtime compatible)
+  return timingSafeEqual(cookieToken, headerToken)
 }
 
 export function middleware(request: NextRequest) {
@@ -97,7 +105,7 @@ export function middleware(request: NextRequest) {
 
   // For production, create a new response with nonce
   if (!isDev) {
-    const nonce = crypto.randomBytes(16).toString('base64')
+    const nonce = randomBytesBase64(16)
 
     const requestHeaders = new Headers(request.headers)
     requestHeaders.set('x-nonce', nonce)

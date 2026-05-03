@@ -143,7 +143,6 @@ export async function POST(request: NextRequest) {
         value: coup.value,
         scope: coup.scope,
         expiry: coup.expiry,
-        selectedCategories: coup.selectedCategories || null,
       }).onConflictDoUpdate({
         target: coupons.id,
         set: { code: coup.code, value: coup.value, expiry: coup.expiry }

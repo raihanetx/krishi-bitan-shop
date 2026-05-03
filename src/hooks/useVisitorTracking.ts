@@ -146,14 +146,7 @@ export async function trackVisitor(): Promise<{
   const os = getOS()
   const today = new Date().toISOString().split('T')[0]
 
-  // console.log('📊 [TRACKING]', { 
-    visitorId, 
-    sessionId, 
-    isNewVisitor, 
-    deviceType, 
-    browser, 
-    os 
-  })
+  // console.log('📊 [TRACKING]', { visitorId, sessionId, isNewVisitor, deviceType, browser, os })
 
   try {
     const response = await fetch('/api/visitors', {
