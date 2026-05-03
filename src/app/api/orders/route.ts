@@ -380,17 +380,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // SMART: Parallel operations for customer check and variant fetch
+    // === PRE-TRANSACTION: Fetch data needed for the transaction ===
+    // Reads happen outside the transaction to keep it fast
     let customerId: number | undefined = undefined
     let variantRecords: any[] = []
-    
+
     const parallelTasks: Promise<any>[] = []
-    
+
     // Customer check
     if (body.phone) {
       parallelTasks.push(db.select().from(customers).where(eq(customers.phone, body.phone)).limit(1))
     }
-    
+
     // Fetch variants for stock decrement (if items provided)
     if (body.items && body.items.length > 0) {
       const productIds = [...new Set(body.items.map((item: any) => item.productId).filter(Boolean))] as number[]
@@ -399,93 +400,100 @@ export async function POST(request: NextRequest) {
         parallelTasks.push(db.select().from(variants).where(inArray(variants.productId, productIds)))
       }
     }
-    
+
     const parallelResults = await Promise.all(parallelTasks)
-    
+
     // Process customer
     const customerResult = body.phone ? parallelResults[0] : null
     const variantsResult = body.items?.length > 0 ? parallelResults[body.phone ? 1 : 0] : []
-    
-    if (customerResult && customerResult.length > 0) {
-      customerId = customerResult[0].id
-      // Update existing customer
-      await db.update(customers)
-        .set({
-          name: body.customerName || customerResult[0].name,
-          address: body.address || customerResult[0].address,
-          totalOrders: sql`${customers.totalOrders} + 1`,
-          totalSpent: sql`${customers.totalSpent} + ${body.total || 0}`,
-        })
-        .where(eq(customers.id, customerResult[0].id))
-    } else if (body.phone) {
-      // Create new customer
-      const newCustomer = await db.insert(customers).values({
-        name: body.customerName,
-        phone: body.phone,
-        address: body.address,
-        totalOrders: 1,
-        totalSpent: body.total || 0,
-      }).returning()
-      customerId = newCustomer[0].id
-    }
-    
+
     // Build variant lookup for stock updates
     const variantLookup = new Map<string, any>()
     for (const v of (variantsResult || [])) {
       variantLookup.set(`${v.productId}-${v.name}`, v)
     }
-    
-    // Create order
-    const newOrder = await db.insert(orders).values({
-      id: body.id || `ORD-${Date.now().toString().slice(-6)}`,
-      customerId: customerId,
-      customerName: body.customerName,
-      phone: body.phone,
-      address: body.address,
-      note: body.note || null,
-      date: body.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      time: body.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      paymentMethod: body.paymentMethod || 'Cash on Delivery',
-      status: body.status || 'pending',
-      subtotal: body.subtotal,
-      delivery: body.delivery,
-      discount: body.discount || 0,
-      couponAmount: body.couponAmount || 0,
-      total: body.total,
-      couponCodes: JSON.stringify(body.couponCodes || []),
-    }).returning()
-    
-    // Create order items and prepare stock updates
-    if (body.items && body.items.length > 0) {
-      await db.insert(orderItems).values(
-        body.items.map((item: any) => ({
-          name: item.name,
-          variant: item.variant,
-          qty: item.qty,
-          basePrice: item.basePrice,
-          offerText: item.offerText,
-          offerDiscount: item.offerDiscount || 0,
-          couponCode: item.couponCode,
-          couponDiscount: item.couponDiscount || 0,
-          orderId: newOrder[0].id,
-          productId: item.productId,
-        }))
-      )
-      
-      // SMART: Batch stock updates
-      for (const item of body.items) {
-        if (item.productId && item.variant) {
-          const variantKey = `${item.productId}-${item.variant}`
-          const variantRecord = variantLookup.get(variantKey)
-          if (variantRecord) {
-            await db.update(variants)
-              .set({ stock: sql`${variants.stock} - ${item.qty}` })
-              .where(eq(variants.id, variantRecord.id))
+
+    // === TRANSACTION: Order + Items + Customer + Stock (all-or-nothing) ===
+    // If ANY step fails, everything rolls back. No ghost orders, no phantom stock.
+    const newOrder = await db.transaction(async (tx) => {
+
+      // 1. Create or update customer
+      if (customerResult && customerResult.length > 0) {
+        customerId = customerResult[0].id
+        await tx.update(customers)
+          .set({
+            name: body.customerName || customerResult[0].name,
+            address: body.address || customerResult[0].address,
+            totalOrders: sql`${customers.totalOrders} + 1`,
+            totalSpent: sql`${customers.totalSpent} + ${body.total || 0}`,
+          })
+          .where(eq(customers.id, customerResult[0].id))
+      } else if (body.phone) {
+        const newCustomer = await tx.insert(customers).values({
+          name: body.customerName,
+          phone: body.phone,
+          address: body.address,
+          totalOrders: 1,
+          totalSpent: body.total || 0,
+        }).returning()
+        customerId = newCustomer[0].id
+      }
+
+      // 2. Create order
+      const createdOrder = await tx.insert(orders).values({
+        id: body.id || `ORD-${Date.now().toString().slice(-6)}`,
+        customerId: customerId,
+        customerName: body.customerName,
+        phone: body.phone,
+        address: body.address,
+        note: body.note || null,
+        date: body.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        time: body.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        paymentMethod: body.paymentMethod || 'Cash on Delivery',
+        status: body.status || 'pending',
+        subtotal: body.subtotal,
+        delivery: body.delivery,
+        discount: body.discount || 0,
+        couponAmount: body.couponAmount || 0,
+        total: body.total,
+        couponCodes: JSON.stringify(body.couponCodes || []),
+      }).returning()
+
+      // 3. Create order items and decrement stock
+      if (body.items && body.items.length > 0) {
+        await tx.insert(orderItems).values(
+          body.items.map((item: any) => ({
+            name: item.name,
+            variant: item.variant,
+            qty: item.qty,
+            basePrice: item.basePrice,
+            offerText: item.offerText,
+            offerDiscount: item.offerDiscount || 0,
+            couponCode: item.couponCode,
+            couponDiscount: item.couponDiscount || 0,
+            orderId: createdOrder[0].id,
+            productId: item.productId,
+          }))
+        )
+
+        // Decrement stock for each item with a matching variant
+        for (const item of body.items) {
+          if (item.productId && item.variant) {
+            const variantKey = `${item.productId}-${item.variant}`
+            const variantRecord = variantLookup.get(variantKey)
+            if (variantRecord) {
+              // Guard: ensure stock won't go negative
+              await tx.update(variants)
+                .set({ stock: sql`GREATEST(${variants.stock} - ${item.qty}, 0)` })
+                .where(eq(variants.id, variantRecord.id))
+            }
           }
         }
       }
-    }
-    
+
+      return createdOrder
+    })
+
     return NextResponse.json({
       success: true,
       data: newOrder[0]
@@ -551,75 +559,84 @@ export async function PUT(request: NextRequest) {
     if (phone !== undefined) updateData.phone = phone
     if (address !== undefined) updateData.address = address
     
-    await db.update(orders).set(updateData).where(eq(orders.id, id))
-    
-    // Handle items update
+    // === PRE-TRANSACTION: Fetch data needed for the transaction ===
+    let oldItems: any[] = []
+    let variantLookup = new Map<string, any>()
+
     if (items && Array.isArray(items)) {
       // Get old items to restore stock
-      const oldItems = await db.select().from(orderItems).where(eq(orderItems.orderId, id))
-      
+      oldItems = await db.select().from(orderItems).where(eq(orderItems.orderId, id))
+
       // Get all variants needed
       const productIds = [...new Set([
         ...oldItems.filter(i => i.productId).map(i => i.productId),
         ...items.filter((i: any) => i.productId).map((i: any) => i.productId)
       ])]
-      
+
       let allVariants: any[] = []
       if (productIds.length > 0) {
         // SECURITY: Use inArray() instead of raw SQL to prevent injection
         allVariants = await db.select().from(variants).where(inArray(variants.productId, productIds))
       }
-      
-      const variantLookup = new Map<string, any>()
+
       for (const v of allVariants) {
         variantLookup.set(`${v.productId}-${v.name}`, v)
       }
-      
-      // Restore stock for old items
-      for (const oldItem of oldItems) {
-        if (oldItem.productId && oldItem.variant) {
-          const variantRecord = variantLookup.get(`${oldItem.productId}-${oldItem.variant}`)
-          if (variantRecord) {
-            await db.update(variants)
-              .set({ stock: sql`${variants.stock} + ${oldItem.qty}` })
-              .where(eq(variants.id, variantRecord.id))
-          }
-        }
-      }
-      
-      // Delete old items and insert new ones
-      await db.delete(orderItems).where(eq(orderItems.orderId, id))
-      
-      if (items.length > 0) {
-        await db.insert(orderItems).values(
-          items.map((item: any) => ({
-            name: item.name,
-            variant: item.variant,
-            qty: item.qty,
-            basePrice: item.basePrice,
-            offerText: item.offerText,
-            offerDiscount: item.offerDiscount || 0,
-            couponCode: item.couponCode,
-            couponDiscount: item.couponDiscount || 0,
-            orderId: id,
-            productId: item.productId,
-          }))
-        )
-        
-        // Decrement stock for new items
-        for (const item of items) {
-          if (item.productId && item.variant) {
-            const variantRecord = variantLookup.get(`${item.productId}-${item.variant}`)
+    }
+
+    // === TRANSACTION: Order update + Items + Stock (all-or-nothing) ===
+    await db.transaction(async (tx) => {
+      // 1. Update order fields
+      await tx.update(orders).set(updateData).where(eq(orders.id, id))
+
+      // 2. Handle items update with stock adjustment
+      if (items && Array.isArray(items)) {
+        // Restore stock for old items
+        for (const oldItem of oldItems) {
+          if (oldItem.productId && oldItem.variant) {
+            const variantRecord = variantLookup.get(`${oldItem.productId}-${oldItem.variant}`)
             if (variantRecord) {
-              await db.update(variants)
-                .set({ stock: sql`${variants.stock} - ${item.qty}` })
+              await tx.update(variants)
+                .set({ stock: sql`${variants.stock} + ${oldItem.qty}` })
                 .where(eq(variants.id, variantRecord.id))
             }
           }
         }
+
+        // Delete old items and insert new ones
+        await tx.delete(orderItems).where(eq(orderItems.orderId, id))
+
+        if (items.length > 0) {
+          await tx.insert(orderItems).values(
+            items.map((item: any) => ({
+              name: item.name,
+              variant: item.variant,
+              qty: item.qty,
+              basePrice: item.basePrice,
+              offerText: item.offerText,
+              offerDiscount: item.offerDiscount || 0,
+              couponCode: item.couponCode,
+              couponDiscount: item.couponDiscount || 0,
+              orderId: id,
+              productId: item.productId,
+            }))
+          )
+
+          // Decrement stock for new items
+          for (const item of items) {
+            if (item.productId && item.variant) {
+              const variantRecord = variantLookup.get(`${item.productId}-${item.variant}`)
+              if (variantRecord) {
+                await tx.update(variants)
+                  .set({ stock: sql`GREATEST(${variants.stock} - ${item.qty}, 0)` })
+                  .where(eq(variants.id, variantRecord.id))
+              }
+            }
+          }
+        }
       }
-    }
-    
+    })
+
     // Fetch updated order with items (parallel)
     const [updatedOrder, updatedItems] = await Promise.all([
       db.select().from(orders).where(eq(orders.id, id)).limit(1),
