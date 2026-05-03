@@ -1,6 +1,6 @@
 import { log, logError } from '@/lib/logger'
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/db'
+import { db, sqlClient } from '@/db'
 import { productViews, cartEvents, products, orders, orderItems, categories } from '@/db/schema'
 import { eq, sql, desc, and, gte, lte, inArray } from 'drizzle-orm'
 import { isApiAuthenticated, authErrorResponse } from '@/lib/api-auth'
@@ -16,10 +16,13 @@ export async function GET(request: NextRequest) {
   const action = searchParams.get('action')
 
   try {
-    // Get most viewed products
+    // ============================================
+    // MOST VIEWED PRODUCTS — 2 queries (not N+1)
+    // ============================================
     if (action === 'most-viewed') {
       const limit = parseInt(searchParams.get('limit') || '5')
-      
+
+      // Query 1: Get top viewed product IDs with aggregated counts
       const views = await db
         .select({
           productId: productViews.productId,
@@ -30,31 +33,47 @@ export async function GET(request: NextRequest) {
         .orderBy(desc(sql`sum(${productViews.viewCount})`))
         .limit(limit)
 
-      // Get product details for each
-      const result = await Promise.all(
-        views.map(async (v) => {
-          const product = await db.select().from(products).where(eq(products.id, v.productId)).limit(1)
-          if (product.length === 0) return null
+      if (views.length === 0) {
+        return NextResponse.json({ success: true, data: [] })
+      }
+
+      // Query 2: Batch fetch all products in ONE query
+      const productIds = views.map(v => v.productId)
+      const productsData = await db.select({
+        id: products.id,
+        name: products.name,
+        category: products.category,
+        image: products.image,
+      }).from(products).where(inArray(products.id, productIds))
+
+      // Build lookup map (O(1) access)
+      const productMap = new Map(productsData.map(p => [p.id, p]))
+
+      // Join in memory
+      const result = views
+        .map(v => {
+          const product = productMap.get(v.productId)
+          if (!product) return null
           return {
             id: v.productId,
-            name: product[0].name,
-            category: product[0].category,
-            image: product[0].image,
+            name: product.name,
+            category: product.category,
+            image: product.image,
             views: v.totalViews,
           }
         })
-      )
+        .filter(Boolean)
 
-      return NextResponse.json({
-        success: true,
-        data: result.filter(Boolean),
-      })
+      return NextResponse.json({ success: true, data: result })
     }
 
-    // Get most added to cart products
+    // ============================================
+    // MOST ADDED TO CART — 2 queries (not N+1)
+    // ============================================
     if (action === 'most-in-cart') {
       const limit = parseInt(searchParams.get('limit') || '5')
-      
+
+      // Query 1: Get top cart product IDs with aggregated counts
       const cartAdditions = await db
         .select({
           productId: cartEvents.productId,
@@ -66,140 +85,159 @@ export async function GET(request: NextRequest) {
         .orderBy(desc(sql`count(*)`))
         .limit(limit)
 
-      // Get product details for each
-      const result = await Promise.all(
-        cartAdditions.map(async (c) => {
-          const product = await db.select().from(products).where(eq(products.id, c.productId)).limit(1)
-          if (product.length === 0) return null
+      if (cartAdditions.length === 0) {
+        return NextResponse.json({ success: true, data: [] })
+      }
+
+      // Query 2: Batch fetch all products in ONE query
+      const productIds = cartAdditions.map(c => c.productId)
+      const productsData = await db.select({
+        id: products.id,
+        name: products.name,
+        category: products.category,
+        image: products.image,
+      }).from(products).where(inArray(products.id, productIds))
+
+      const productMap = new Map(productsData.map(p => [p.id, p]))
+
+      const result = cartAdditions
+        .map(c => {
+          const product = productMap.get(c.productId)
+          if (!product) return null
           return {
             id: c.productId,
-            name: product[0].name,
-            category: product[0].category,
-            image: product[0].image,
+            name: product.name,
+            category: product.category,
+            image: product.image,
             adds: c.totalAdds,
           }
         })
-      )
+        .filter(Boolean)
 
-      return NextResponse.json({
-        success: true,
-        data: result.filter(Boolean),
-      })
+      return NextResponse.json({ success: true, data: result })
     }
 
-    // Get 7-day sales chart data
+    // ============================================
+    // SALES CHART — 1 query with GROUP BY (not 7)
+    // ============================================
     if (action === 'sales-chart') {
+      const days = parseInt(searchParams.get('days') || '7')
+
+      const startDate = new Date()
+      startDate.setDate(startDate.getDate() - (days - 1))
+      startDate.setHours(0, 0, 0, 0)
+
+      // Single query: GROUP BY date using PostgreSQL DATE()
+      const rows = await sqlClient`
+        SELECT 
+          DATE(created_at) as day,
+          COUNT(*)::int as order_count,
+          COALESCE(SUM(total), 0)::numeric as revenue
+        FROM orders
+        WHERE status = 'approved'
+          AND created_at >= ${startDate.toISOString()}
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC
+      ` as Array<{ day: string; order_count: number; revenue: string }>
+
+      // Build a map for quick lookup
+      const dataMap = new Map<string, { orders: number; revenue: number }>()
+      for (const row of rows) {
+        const dateStr = new Date(row.day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        dataMap.set(dateStr, {
+          orders: row.order_count,
+          revenue: Math.round(parseFloat(row.revenue) || 0),
+        })
+      }
+
+      // Fill in all days (including zeros for days with no orders)
       const chartData: { day: string; revenue: number; orders: number }[] = []
-      const today = new Date()
-      
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date(today)
+      for (let i = days - 1; i >= 0; i--) {
+        const date = new Date()
         date.setDate(date.getDate() - i)
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        const dayStart = new Date(date.setHours(0, 0, 0, 0))
-        const dayEnd = new Date(date.setHours(23, 59, 59, 999))
-        
-        // Get orders for this day (using createdAt timestamp)
-        const dayOrders = await db.select().from(orders)
-          .where(and(
-            gte(orders.createdAt, dayStart),
-            lte(orders.createdAt, dayEnd),
-            eq(orders.status, 'approved')
-          ))
-        
-        const dayTotal = dayOrders.reduce((sum, o) => sum + Math.round(parseFloat(String(o.total)) || 0), 0)
-        
+        const data = dataMap.get(dateStr)
         chartData.push({
           day: dateStr,
-          revenue: dayTotal,
-          orders: dayOrders.length,
+          revenue: data?.revenue || 0,
+          orders: data?.orders || 0,
         })
       }
 
-      return NextResponse.json({
-        success: true,
-        data: chartData,
-      })
+      return NextResponse.json({ success: true, data: chartData })
     }
 
-    // Get revenue by category
+    // ============================================
+    // REVENUE BY CATEGORY — 1 query with JOIN (not N+1)
+    // ============================================
     if (action === 'revenue-by-category') {
-      const allOrders = await db.select().from(orders).where(eq(orders.status, 'approved'))
-      const orderIds = allOrders.map(o => o.id)
-      
-      if (orderIds.length === 0) {
-        return NextResponse.json({
-          success: true,
-          data: [],
-        })
-      }
+      // Single query: JOIN order_items with products to get category + revenue
+      const rows = await sqlClient`
+        SELECT 
+          p.category as category,
+          SUM(ROUND(CAST(oi.base_price AS numeric) * oi.qty))::bigint as revenue
+        FROM order_items oi
+        JOIN orders o ON oi.order_id = o.id
+        JOIN products p ON oi.product_id = p.id
+        WHERE o.status = 'approved'
+        GROUP BY p.category
+        ORDER BY revenue DESC
+        LIMIT 5
+      ` as Array<{ category: string; revenue: string }>
 
-      // SECURITY: Use inArray() instead of raw SQL to prevent SQL injection
-      const items = await db.select().from(orderItems)
-        .where(inArray(orderItems.orderId, orderIds))
-      
-      // Group by category
-      const categoryRevenue: Record<string, number> = {}
-      let totalRevenue = 0
+      // Get total revenue for percentage calculation
+      const totalResult = await sqlClient`
+        SELECT COALESCE(SUM(total), 0)::numeric as total
+        FROM orders
+        WHERE status = 'approved'
+      ` as Array<{ total: string }>
+      const totalRevenue = Math.round(parseFloat(totalResult[0]?.total || '0'))
 
-      for (const item of items) {
-        if (item.productId) {
-          const product = await db.select().from(products).where(eq(products.id, item.productId)).limit(1)
-          if (product.length > 0) {
-            const category = product[0].category
-            const itemTotal = Math.round(parseFloat(String(item.basePrice)) || 0) * item.qty
-            categoryRevenue[category] = (categoryRevenue[category] || 0) + itemTotal
-            totalRevenue += itemTotal
-          }
-        }
-      }
+      const result = rows.map(row => ({
+        category: row.category || 'Other',
+        revenue: parseInt(row.revenue) || 0,
+        percentage: totalRevenue > 0 ? Math.round((parseInt(row.revenue) / totalRevenue) * 100) : 0,
+      }))
 
-      const result = Object.entries(categoryRevenue)
-        .map(([category, revenue]) => ({
-          category,
-          revenue,
-          percentage: totalRevenue > 0 ? Math.round((revenue / totalRevenue) * 100) : 0,
-        }))
-        .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 5)
-
-      return NextResponse.json({
-        success: true,
-        data: result,
-        totalRevenue,
-      })
+      return NextResponse.json({ success: true, data: result, totalRevenue })
     }
 
-    // Get dashboard overview stats
+    // ============================================
+    // DASHBOARD OVERVIEW — parallel queries
+    // ============================================
     if (action === 'overview') {
       const today = new Date()
       today.setHours(0, 0, 0, 0)
-      
-      // Today's orders
-      const todayOrders = await db.select().from(orders)
-        .where(gte(orders.createdAt, today))
-      
-      // Total revenue from approved orders
-      const approvedOrders = await db.select().from(orders).where(eq(orders.status, 'approved'))
-      const totalRevenue = approvedOrders.reduce((sum, o) => sum + Math.round(parseFloat(String(o.total)) || 0), 0)
-      
-      // Pending orders
-      const pendingOrders = await db.select().from(orders).where(eq(orders.status, 'pending'))
-      
-      // Total customers
-      const allCustomers = await db.select().from(
-        sql`SELECT COUNT(DISTINCT phone) as count FROM orders`
-      ) as Array<{ count: string }>
-      
+
+      // All counts in parallel
+      const [todayResult, approvedResult, pendingResult, customerResult] = await Promise.all([
+        // Today's orders
+        sqlClient`
+          SELECT COUNT(*)::int as count,
+                 COALESCE(SUM(CASE WHEN status = 'approved' THEN total ELSE 0 END), 0)::numeric as revenue
+          FROM orders
+          WHERE created_at >= ${today.toISOString()}
+        `,
+        // Approved totals
+        sqlClient`
+          SELECT COUNT(*)::int as count, COALESCE(SUM(total), 0)::numeric as revenue
+          FROM orders WHERE status = 'approved'
+        `,
+        // Pending count
+        sqlClient`SELECT COUNT(*)::int as count FROM orders WHERE status = 'pending'`,
+        // Unique customers
+        sqlClient`SELECT COUNT(DISTINCT phone)::int as count FROM orders`,
+      ])
+
       return NextResponse.json({
         success: true,
         data: {
-          totalRevenue,
-          totalOrders: approvedOrders.length,
-          pendingOrders: pendingOrders.length,
-          todayOrders: todayOrders.length,
-          todayRevenue: todayOrders.filter(o => o.status === 'approved').reduce((sum, o) => sum + Math.round(parseFloat(String(o.total)) || 0), 0),
-          totalCustomers: parseInt(allCustomers[0]?.count || '0'),
+          totalRevenue: Math.round(parseFloat(approvedResult[0]?.revenue || '0')),
+          totalOrders: approvedResult[0]?.count || 0,
+          pendingOrders: pendingResult[0]?.count || 0,
+          todayOrders: todayResult[0]?.count || 0,
+          todayRevenue: Math.round(parseFloat(todayResult[0]?.revenue || '0')),
+          totalCustomers: customerResult[0]?.count || 0,
         },
       })
     }
