@@ -381,7 +381,7 @@ export async function initializeDatabase(): Promise<{ success: boolean; message:
     // This handles schema updates where columns were added AFTER
     // the table was originally created. CREATE TABLE IF NOT EXISTS
     // won't add columns to an existing table.
-    const MIGRATIONS = [
+    const COLUMN_MIGRATIONS = [
       // visitor_sessions: added visitor_id and is_new_visitor after initial creation
       `ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS visitor_id TEXT`,
       `ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS is_new_visitor BOOLEAN DEFAULT true`,
@@ -391,17 +391,52 @@ export async function initializeDatabase(): Promise<{ success: boolean; message:
       `ALTER TABLE abandoned_checkouts ADD COLUMN IF NOT EXISTS checkout_seconds INTEGER DEFAULT 0`,
     ]
 
-    for (const migrationSql of MIGRATIONS) {
+    for (const migrationSql of COLUMN_MIGRATIONS) {
       try {
         await sqlClient.unsafe(migrationSql)
       } catch (error: any) {
         // Ignore "column already exists" errors
         if (!error.message?.includes('already exists')) {
-          logError('[AUTO-INIT] Migration error:', error.message)
+          logError('[AUTO-INIT] Column migration error:', error.message)
         }
       }
     }
-    log('[AUTO-INIT] Migrations applied')
+    log('[AUTO-INIT] Column migrations applied')
+
+    // ============================================
+    // MIGRATIONS: Add foreign keys if missing
+    // ============================================
+    // CREATE TABLE IF NOT EXISTS won't add FKs to existing tables.
+    // These use ALTER TABLE ADD CONSTRAINT IF NOT EXISTS equivalent
+    // (PostgreSQL doesn't support IF NOT EXISTS for constraints,
+    // so we catch "already exists" errors).
+    const FK_MIGRATIONS = [
+      { table: 'products', col: 'category_id', ref: 'categories(id)', name: 'fk_products_category_id' },
+      { table: 'variants', col: 'product_id', ref: 'products(id)', name: 'fk_variants_product_id' },
+      { table: 'product_images', col: 'product_id', ref: 'products(id)', name: 'fk_product_images_product_id' },
+      { table: 'product_faqs', col: 'product_id', ref: 'products(id)', name: 'fk_product_faqs_product_id' },
+      { table: 'related_products', col: 'product_id', ref: 'products(id)', name: 'fk_related_products_product_id' },
+      { table: 'related_products', col: 'related_product_id', ref: 'products(id)', name: 'fk_related_products_related_id' },
+      { table: 'reviews', col: 'product_id', ref: 'products(id)', name: 'fk_reviews_product_id' },
+      { table: 'reviews', col: 'customer_id', ref: 'customers(id)', name: 'fk_reviews_customer_id' },
+      { table: 'orders', col: 'customer_id', ref: 'customers(id)', name: 'fk_orders_customer_id' },
+      { table: 'order_items', col: 'order_id', ref: 'orders(id) ON DELETE CASCADE', name: 'fk_order_items_order_id' },
+      { table: 'order_items', col: 'product_id', ref: 'products(id)', name: 'fk_order_items_product_id' },
+      { table: 'product_views', col: 'product_id', ref: 'products(id)', name: 'fk_product_views_product_id' },
+      { table: 'cart_events', col: 'product_id', ref: 'products(id)', name: 'fk_cart_events_product_id' },
+    ]
+
+    for (const fk of FK_MIGRATIONS) {
+      try {
+        await sqlClient.unsafe(`ALTER TABLE ${fk.table} ADD CONSTRAINT ${fk.name} FOREIGN KEY (${fk.col}) REFERENCES ${fk.ref}`)
+      } catch (error: any) {
+        // Ignore "already exists" errors
+        if (!error.message?.includes('already exists')) {
+          logError(`[AUTO-INIT] FK migration ${fk.name}:`, error.message)
+        }
+      }
+    }
+    log('[AUTO-INIT] Foreign key migrations applied')
 
     // Ensure default settings row exists
     try {
