@@ -3,44 +3,81 @@ import postgres from 'postgres'
 import * as schema from './schema'
 
 // ============================================
-// DATABASE CONFIGURATION
+// DATABASE CONFIGURATION (LAZY INITIALIZATION)
 // ============================================
-// Get database URL from environment variable ONLY
-// NEVER hardcode credentials in source code
-const DATABASE_URL = process.env.DATABASE_URL
+// Connection is created on first use, NOT on import.
+// This allows the build step to succeed without DATABASE_URL.
 
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is required')
+let _client: ReturnType<typeof postgres> | null = null
+let _dbInstance: ReturnType<typeof drizzle> | null = null
+
+function getClient() {
+  if (_client) return _client
+  
+  const DATABASE_URL = process.env.DATABASE_URL
+  if (!DATABASE_URL) {
+    throw new Error('DATABASE_URL environment variable is required')
+  }
+
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  _client = postgres(DATABASE_URL, { 
+    ssl: 'require',
+    max: isProduction ? 10 : 3,
+    idle_timeout: 30,
+    connect_timeout: 10,
+    prepare: true,
+    transform: {
+      undefined: null
+    }
+  })
+  
+  return _client
 }
 
-// Create postgres connection - OPTIMIZED for production
-// Connection pool settings for better performance
-const isProduction = process.env.NODE_ENV === 'production'
+function getDb() {
+  if (_dbInstance) return _dbInstance
+  const client = getClient()
+  _dbInstance = drizzle(client, { schema })
+  return _dbInstance
+}
 
-const client = postgres(DATABASE_URL, { 
-  ssl: 'require',
-  // Connection pool - more connections for production = faster concurrent queries
-  max: isProduction ? 10 : 3,
-  // Idle timeout - close unused connections after 30 seconds
-  idle_timeout: 30,
-  // Connect timeout - fail fast if database is unreachable
-  connect_timeout: 10,
-  // Prepare statements for faster repeated queries
-  prepare: true,
-  // Transform undefined to null for safer queries
-  transform: {
-    undefined: null
+// Proxy that lazily initializes on first access
+export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+  get(_target, prop) {
+    const instance = getDb()
+    const value = (instance as any)[prop]
+    if (typeof value === 'function') {
+      return value.bind(instance)
+    }
+    return value
   }
 })
-const dbInstance = drizzle(client, { schema })
 
-export const db = dbInstance
-export const sqlClient = client // Export for raw SQL execution
+export function getSqlClient() {
+  return getClient()
+}
+
+// Also export as sqlClient for backward compatibility
+// Must be callable (used as tagged template literal: sqlClient`SELECT 1`)
+export const sqlClient = new Proxy(function() {}, {
+  apply(_target, _thisArg, args) {
+    const client = getClient()
+    return (client as any)(...args)
+  },
+  get(_target, prop) {
+    const client = getClient()
+    const value = (client as any)[prop]
+    if (typeof value === 'function') {
+      return value.bind(client)
+    }
+    return value
+  }
+}) as unknown as ReturnType<typeof postgres>
 
 // ============================================
 // AUTO-INITIALIZATION ON FIRST DB ACCESS
 // ============================================
-// This ensures tables are created even if instrument.ts didn't run
 
 declare global {
   var __settingsCache: { data: any; timestamp: number } | undefined
@@ -54,8 +91,11 @@ declare global {
 async function autoInitFallback() {
   if (globalThis.__dbAutoInitialized) return
   
+  // Skip during build time (no DATABASE_URL)
+  if (!process.env.DATABASE_URL) return
+  
   try {
-    // Check if tables exist
+    const client = getClient()
     const result = await client`
       SELECT table_name FROM information_schema.tables 
       WHERE table_schema = 'public' 
@@ -65,8 +105,6 @@ async function autoInitFallback() {
     
     if (result.length === 0) {
       console.log('[DB] Tables not found, running auto-init...')
-      
-      // Import and run initialization
       const { initializeDatabase } = await import('@/lib/auto-init')
       await initializeDatabase()
     }
@@ -77,14 +115,15 @@ async function autoInitFallback() {
   }
 }
 
-// Run auto-init in background (non-blocking)
-autoInitFallback().catch(console.error)
+// Run auto-init in background (non-blocking) — only at runtime
+if (process.env.DATABASE_URL) {
+  autoInitFallback().catch(console.error)
+}
 
 // ============================================
 // Global caches that persist across requests
 // ============================================
 
-// Cache getters/setters
 export function getCachedSettings() {
   return globalThis.__settingsCache || null
 }
@@ -121,7 +160,6 @@ export function setCachedCourierCredentials(data: any) {
   globalThis.__courierCredentials = { data, timestamp: Date.now() }
 }
 
-// Clear all caches (useful for testing or forced refresh)
 export function clearAllCaches() {
   globalThis.__settingsCache = undefined
   globalThis.__shopDataCache = undefined
@@ -129,7 +167,6 @@ export function clearAllCaches() {
   globalThis.__courierCredentials = undefined
 }
 
-// Clear shop data cache only (used when admin updates products/categories)
 export function clearShopDataCache() {
   globalThis.__shopDataCache = undefined
 }
