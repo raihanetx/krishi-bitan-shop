@@ -375,6 +375,34 @@ export async function initializeDatabase(): Promise<{ success: boolean; message:
       }
     }
     
+    // ============================================
+    // MIGRATIONS: Add missing columns to existing tables
+    // ============================================
+    // This handles schema updates where columns were added AFTER
+    // the table was originally created. CREATE TABLE IF NOT EXISTS
+    // won't add columns to an existing table.
+    const MIGRATIONS = [
+      // visitor_sessions: added visitor_id and is_new_visitor after initial creation
+      `ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS visitor_id TEXT`,
+      `ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS is_new_visitor BOOLEAN DEFAULT true`,
+      // abandoned_checkouts: added checkout duration tracking after initial creation
+      `ALTER TABLE abandoned_checkouts ADD COLUMN IF NOT EXISTS checkout_started_at TIMESTAMP`,
+      `ALTER TABLE abandoned_checkouts ADD COLUMN IF NOT EXISTS checkout_ended_at TIMESTAMP`,
+      `ALTER TABLE abandoned_checkouts ADD COLUMN IF NOT EXISTS checkout_seconds INTEGER DEFAULT 0`,
+    ]
+
+    for (const migrationSql of MIGRATIONS) {
+      try {
+        await sqlClient.unsafe(migrationSql)
+      } catch (error: any) {
+        // Ignore "column already exists" errors
+        if (!error.message?.includes('already exists')) {
+          logError('[AUTO-INIT] Migration error:', error.message)
+        }
+      }
+    }
+    log('[AUTO-INIT] Migrations applied')
+
     // Ensure default settings row exists
     try {
       const settingsCheck = await sqlClient`
